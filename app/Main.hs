@@ -1,56 +1,60 @@
+{-# OPTIONS_GHC -Wno-name-shadowing #-}
 module Main where
 
 import qualified System.Environment as Env
 import qualified Data.Text as T
-import System.Directory
+import System.Directory ( doesDirectoryExist, doesFileExist )
+import Control.Monad (when)
 
 import Search
 import Types
+import Utils
+import Constants
 
-getFlags :: [String] -> [Flags]
-getFlags = map (\f -> case f of
-                        "-r" -> Recursive
-                        "-n" -> LineNumber
-                        "-f" -> ShowFile
-                        "-i" -> CaseInSensitive
-                        _    -> Recursive
-                        )
-
-parseArgs :: [String] -> [String] -> IO (Either ErrorMsg Args)
-parseArgs flags nonflags = case nonflags of 
-                                []          -> pure $ Left ("No pattern provided")
-                                [pattern]   -> pure $ Right (Args{
-                                                    pattern= T.pack pattern,
+parseArgs :: [Flags] -> [String] -> IO (Either ErrorMsg Args)
+parseArgs flags' nonflags = case nonflags of
+                                []          -> pure $ Left "No pattern provided"
+                                [pattern']   -> pure $ Right (Args{
+                                                    pattern= T.pack pattern',
                                                     searchLocation= Nothing,
                                                     searchLocationType= STDIN,
-                                                    flags= getFlags flags
+                                                    flags= flags'
                                                 })
-                                (pattern:location:_) -> do
-                                                        isDirectory <- doesDirectoryExist location
-                                                        isFile <- doesFileExist location
+                                (pattern':location':_) -> do
+                                                        isDirectory <- doesDirectoryExist location'
+                                                        isFile <- doesFileExist location'
 
                                                         if not (isDirectory || isFile)
-                                                            then pure $ Left ("Invalid search location: " ++ location)
+                                                            then pure $ Left ("Invalid search location: " ++ location')
                                                             else pure $ Right (Args{
-                                                                pattern= T.pack pattern,
-                                                                searchLocation= Just (T.pack location),
+                                                                pattern= T.pack pattern',
+                                                                searchLocation= Just (T.pack location'),
                                                                 searchLocationType= FS,
-                                                                flags= getFlags flags
+                                                                flags= flags'
                                                             })
 
+separateFlagsAndNonFlags :: [String] -> ([Flags],[String])
+separateFlagsAndNonFlags [] = ([],[])
+separateFlagsAndNonFlags (arg:args) = if head arg == '-'
+                                            then if flagWithValues arg
+                                                    then
+                                                        let (flags',nonflags') = separateFlagsAndNonFlags (tail args)
+                                                            v = parseInt (head args)
+                                                        in ( flagMap (arg,v):flags' , nonflags' )
+                                                    else
+                                                        let (flags',nonflags') = separateFlagsAndNonFlags args
+                                                        in ( flagMap (arg,0):flags' , nonflags' )
+                                            else (flags', arg:nonflags)
+                                                 where (flags',nonflags) = separateFlagsAndNonFlags args
 main :: IO ()
 main = do
     args <- Env.getArgs
 
-    if null args
-        then error("No arguments provided") else pure ()
+    when (null args) $ error "No arguments provided"
 
-    let
-        flags = [arg | arg <- args, head arg == '-' ]
-        nonflags = [arg | arg <- args, head arg /= '-' ]
-    
+    let (flags,nonflags) = separateFlagsAndNonFlags args
+
     res <- parseArgs flags nonflags
     case res of
-        Left errMsg -> error(errMsg)
+        Left errMsg -> error errMsg
         Right args  -> search args
-
